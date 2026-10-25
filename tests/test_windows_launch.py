@@ -1,15 +1,33 @@
 """Windows batch launchers must never receive unescaped agent prompt text."""
 
+import errno
 import os
 import unittest
 from unittest.mock import MagicMock, patch
 
 from agent_accounts.providers import executable
-from agent_accounts.runner import _stop
+from agent_accounts.runner import _stop, launch
 from agent_accounts.store import AccountError
 
 
 class WindowsLaunchTests(unittest.TestCase):
+    def test_windows_closed_stdout_einval_is_handled_as_a_broken_pipe(self):
+        process = MagicMock(pid=12345)
+        process.stdout.readline.side_effect = [b'{"type":"thread.started"}\n', b""]
+        process.poll.return_value = 1
+        output = MagicMock()
+        output.buffer.write.side_effect = OSError(errno.EINVAL, "Invalid argument")
+        with (
+            patch.object(os, "name", "nt"),
+            patch("agent_accounts.runner.subprocess.Popen", return_value=process),
+            patch("agent_accounts.runner.sys.stdout", output),
+            patch("agent_accounts.runner._stop") as stop,
+            patch("agent_accounts.runner.os.dup2"),
+        ):
+            code = launch(["synthetic.exe"], {}, detector=MagicMock())
+        self.assertEqual(code, 141)
+        stop.assert_called_once()
+
     def test_windows_cancellation_stops_the_native_process_tree(self):
         process = MagicMock(pid=12345)
         process.poll.return_value = None

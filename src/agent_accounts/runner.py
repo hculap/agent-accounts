@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import errno
 import os
 import shutil
 import signal
@@ -81,8 +82,16 @@ def launch(argv: list[str], env: dict[str, str], *, detector=None, stdin=None) -
             assert process.stdout is not None
             oversized = False
             while chunk := process.stdout.readline(1024 * 1024):
-                sys.stdout.buffer.write(chunk)
-                sys.stdout.buffer.flush()
+                try:
+                    sys.stdout.buffer.write(chunk)
+                    sys.stdout.buffer.flush()
+                except OSError as exc:
+                    # Windows' CRT reports a closed pipe as EINVAL instead of
+                    # EPIPE. Normalize only stdout writes, so unrelated I/O
+                    # failures still propagate as genuine filesystem errors.
+                    if os.name == "nt" and exc.errno == errno.EINVAL:
+                        raise BrokenPipeError from exc
+                    raise
                 if len(chunk) == 1024 * 1024 and not chunk.endswith(b"\n"):
                     oversized = True
                     detector.malformed = True
