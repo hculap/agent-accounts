@@ -35,6 +35,8 @@ Write a focused failing test for the behavior, confirm the failure, then impleme
 
 For rotation changes, cover both the true quota signal and a similar message that must not trigger rotation. Include terminal failures, cancellations, bounded retries, cooldowns, and the point at which replay becomes unsafe. Do not weaken these boundaries to make a new provider version pass.
 
+For usage thresholds, cover both providers, inclusive percentage boundaries, unavailable or malformed snapshots, disabled rotation, and accounts that are busy or all above the threshold. Native usage probes must use synthetic control-protocol peers in tests, never real credentials or model prompts. Verify deadlines, output limits, cancellation, and child cleanup. Keep old state files readable without rewriting them during a read.
+
 ## Pull requests
 
 Explain the user-visible problem and resulting behavior. Include the checks you ran, relevant platform limitations, and any provider version assumptions. Keep source credentials, provider transcripts, and private account identifiers out of patches and test fixtures.

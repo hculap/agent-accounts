@@ -45,12 +45,25 @@ def parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Allow retrying the full command even after partial work.",
     )
-    settings = commands.add_parser("settings", help="View settings or set optional rotation.")
+    settings = commands.add_parser(
+        "settings", help="View settings or set optional rotation and provider usage thresholds."
+    )
     settings.add_argument("--json", action="store_true")
     settings_sub = settings.add_subparsers(dest="settings_command")
     setting = settings_sub.add_parser("set")
-    setting.add_argument("key", choices=("auto-rotate", "cooldown-seconds"))
-    setting.add_argument("value")
+    setting.add_argument(
+        "key",
+        choices=(
+            "auto-rotate",
+            "cooldown-seconds",
+            "codex-rotation-threshold",
+            "claude-rotation-threshold",
+        ),
+    )
+    setting.add_argument(
+        "value",
+        help="on/off for auto-rotate; seconds for cooldown; integer percent used (1-100, default 95) for thresholds.",
+    )
     doctor = commands.add_parser(
         "doctor", help="Check prerequisites without network calls or login."
     )
@@ -206,14 +219,15 @@ def _main(argv: list[str] | None = None) -> int:
                         raise AccountError("auto-rotate must be on or off.")
                     value = value == "on"
                 else:
+                    maximum = 604800 if options.key == "cooldown-seconds" else 100
                     try:
                         value = int(value)
                     except ValueError as exc:
                         raise AccountError(
-                            "cooldown-seconds must be an integer from 1 to 604800."
+                            f"{options.key} must be an integer from 1 to {maximum}."
                         ) from exc
-                    if not 1 <= value <= 604800:
-                        raise AccountError("cooldown-seconds must be from 1 to 604800.")
+                    if not 1 <= value <= maximum:
+                        raise AccountError(f"{options.key} must be from 1 to {maximum}.")
                 with store.lock():
                     state = store.read()
                     state["settings"][options.key.replace("-", "_")] = value
@@ -224,6 +238,9 @@ def _main(argv: list[str] | None = None) -> int:
             else:
                 print(f"auto-rotate: {'on' if settings['auto_rotate'] else 'off'}")
                 print(f"cooldown-seconds: {settings['cooldown_seconds']}")
+                for provider in PROVIDERS:
+                    threshold = settings[f"{provider}_rotation_threshold"]
+                    print(f"{provider}-rotation-threshold: {threshold}% used")
         elif options.command == "doctor":
             store.read()  # Include validation, never initialize a store or contact providers.
             report = {

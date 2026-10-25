@@ -3,7 +3,7 @@
 [![CI](https://github.com/hculap/agent-accounts/actions/workflows/ci.yml/badge.svg)](https://github.com/hculap/agent-accounts/actions/workflows/ci.yml)
 [![MIT license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Manage named **Codex** and **Claude Code** accounts from one CLI. Each account has its own provider directory, so switching accounts does not replace credentials underneath another session. Optional rotation selects another account when a supported batch command reports a quota limit.
+Manage named **Codex** and **Claude Code** accounts from one CLI. Each account has its own provider directory, so switching accounts does not replace credentials underneath another session. Optional rotation skips accounts at a configurable usage threshold before a batch task starts, and selects another account when a supported batch command reports a quota limit.
 
 `agent-accounts` and `aa` are the same executable. This is an independent community project, based on [codex-account](https://github.com/hculap/codex-account), and is not affiliated with OpenAI or Anthropic.
 
@@ -78,6 +78,21 @@ aa settings set auto-rotate off
 aa settings
 ```
 
+Both providers default to a **95% used** threshold. Configure each independently with an integer from 1 to 100:
+
+```sh
+aa settings set codex-rotation-threshold 90
+aa settings set claude-rotation-threshold 95
+```
+
+When rotation is enabled, the wrapper checks the selected account before each batch attempt. Usage **at or above** its threshold skips that account without sending the task to it. It checks other eligible accounts of the same provider, once each. If threshold or backend-denial checks exhaust eligible accounts before any task starts, it exits with code `75`; it never silently exceeds a known threshold. Raising a threshold takes effect on the next invocation. Threshold skips do not create persistent quota cooldowns.
+
+The percentage is the highest reported provider-wide window: Codex's primary/secondary `codex` quota windows, or Claude's five-hour/seven-day windows. Model-specific limits and usage-credit budgets are not used for this preflight decision. An explicit Codex backend denial also prevents launch, even when its percentage is low.
+
+Usage is read through the native CLIs without sending a model prompt or reading credential values. Codex uses [App Server account/rateLimits/read](https://developers.openai.com/codex/app-server#6-rate-limits-chatgpt). Claude uses its experimental `get_usage` control request, which may change across CLI releases and may return native cached data. [Claude documents last-known usage when a fresh read fails](https://code.claude.com/docs/en/costs#when-the-usage-request-fails); expired Claude windows are ignored. An unavailable, unsupported, or invalid read prints a warning and retains quota-error rotation. It does not guess a percentage.
+
+The threshold is checked **before a task**, not continuously during it. A long task or concurrent usage elsewhere can cross the threshold after it starts. Existing conversations are never interrupted or transferred by this check. Rotation remains off by default, including after upgrading an older installation.
+
 Or select it for one invocation:
 
 ```sh
@@ -91,7 +106,7 @@ Automatic rotation requires these structured batch modes. It recognizes provider
 aa settings set cooldown-seconds 3600
 ```
 
-A busy account explicitly selected with `--account` fails without launching another account. Busy fallback accounts are skipped after a confirmed quota failure.
+A busy account explicitly selected with `--account` fails without launching another account. Busy fallback accounts are skipped after a threshold skip or confirmed quota failure.
 
 By default, a task is retried only before assistant or tool work has begun. If a quota error arrives after work has started, the next account is selected, but the task exits without replaying earlier actions. Inspect the existing changes and start a suitable continuation yourself.
 

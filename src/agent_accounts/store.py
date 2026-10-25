@@ -14,7 +14,12 @@ import uuid
 from pathlib import Path
 
 PROVIDERS = ("codex", "claude")
-DEFAULT_SETTINGS = {"auto_rotate": False, "cooldown_seconds": 300}
+DEFAULT_SETTINGS = {
+    "auto_rotate": False,
+    "cooldown_seconds": 300,
+    "codex_rotation_threshold": 95,
+    "claude_rotation_threshold": 95,
+}
 
 
 class AccountError(Exception):
@@ -169,6 +174,11 @@ class Store:
             return {"version": 1, "settings": dict(DEFAULT_SETTINGS), "active": {}, "profiles": []}
         state = read_object(path)
         self.validate(state)
+        # Version 1 stores predate per-provider thresholds. Supply only missing
+        # new settings in memory; reads must not rewrite private account state.
+        for provider in PROVIDERS:
+            key = f"{provider}_rotation_threshold"
+            state["settings"].setdefault(key, DEFAULT_SETTINGS[key])
         return state
 
     def validate(self, state: dict) -> None:
@@ -188,6 +198,11 @@ class Store:
                 or not 1 <= settings["cooldown_seconds"] <= 604800
             ):
                 raise ValueError
+            for provider in PROVIDERS:
+                key = f"{provider}_rotation_threshold"
+                threshold = settings.get(key, DEFAULT_SETTINGS[key])
+                if type(threshold) is not int or not 1 <= threshold <= 100:
+                    raise ValueError
             seen = set()
             ids = set()
             for p in state["profiles"]:

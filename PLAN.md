@@ -20,9 +20,10 @@ The new repository retains the original MIT attribution.
    executables. Observe missing-command failures before implementation.
 3. Implement private atomic storage, native login, explicit import, selection,
    removal that retains data, settings, diagnostics, and process forwarding.
-4. Implement optional bounded rotation: structured batch output only, confirmed
-   terminal quota failures, persisted cooldowns, provider-local selection, and
-   no replay after partial work unless explicitly enabled.
+4. Implement optional bounded rotation: native usage preflight with separate
+   95% default thresholds, structured batch output, confirmed terminal quota
+   failures, persisted hard-limit cooldowns, provider-local selection, and no
+   replay after partial work unless explicitly enabled.
 5. Independently test and review failure paths; fix verified defects and repeat
    the affected checks. Validate source distributions, wheels, and uv/pipx installs.
 6. Inspect the exact publication tree for credentials; create a separate public
@@ -34,6 +35,14 @@ The new repository retains the original MIT attribution.
   credential replacement is unsupported. Batch runs support automatic rotation.
 - Rotation is off by default. Structured output is forwarded unchanged, so a
   retry produces more than one attempt's events on stdout. Notices use stderr.
+- Native quota preflight skips accounts at or above the provider's configurable
+  threshold before a task starts. It does not interrupt running tasks. Codex
+  primary/secondary and Claude five-hour/seven-day windows are supported;
+  unrelated model-specific buckets do not trigger account-wide rotation.
+- Unavailable native usage falls back to existing quota-error rotation with a
+  warning. Claude's experimental usage control API can return cached data;
+  expired windows are ignored. No user credentials are read by the wrapper
+  for quota preflight, and no model prompt is submitted.
 - Tool or assistant activity prevents automatic replay; selection can still
   advance. `--allow-replay` explicitly permits repeating the full task.
 - No unofficial usage endpoints, background polling, credential refresh, or

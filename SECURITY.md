@@ -10,7 +10,9 @@ This tool manages local account selection and launches the official provider CLI
 - Imported credentials are copies. Revoking or rotating the original token family can invalidate an imported account. Independent login flows avoid this coupling.
 - Removing an account registration retains its provider directory and does not log it out. Uninstalling the package also retains account data.
 
-Rotation is disabled by default. It acts on supported structured quota-error events and stops after trying each eligible account once. It cannot guarantee a safe replay after an agent has changed files or called tools; `--allow-replay` explicitly permits restarting that work. The wrapper cannot change credentials already held by another process.
+Rotation is disabled by default. When enabled, native usage preflight skips accounts at their configured threshold before task launch. Usage probes send control messages only, have bounded time and output, and leave authentication and refresh to the native CLI. Claude's experimental usage interface can return cached data. Unavailable usage produces a warning and falls back to supported structured quota-error events; the threshold is not a guaranteed spending cap. Each eligible account is considered at most once per invocation.
+
+Rotation cannot guarantee a safe replay after an agent has changed files or called tools; `--allow-replay` explicitly permits restarting that work. The wrapper cannot change credentials already held by another process, and threshold checks do not interrupt running tasks.
 
 The application executes provider binaries found on `PATH`; use trusted installations and do not prepend untrusted directories. Provider configuration, project instructions, hooks, plugins, and tools execute under the native CLI's permission model.
 

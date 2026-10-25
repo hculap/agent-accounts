@@ -14,6 +14,44 @@ def main():
     if provider not in {"codex", "claude"}:
         provider = arguments.pop(0)
     home = os.environ["CODEX_HOME" if provider == "codex" else "CLAUDE_CONFIG_DIR"]
+    # Quota probes are control traffic only, never recorded as task execution.
+    if "app-server" in arguments or "--input-format" in arguments:
+        usage_calls = os.environ.get("AA_TEST_USAGE_CALLS")
+        if usage_calls:
+            with open(usage_calls, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps({"provider": provider, "home": home}) + "\n")
+        snapshots = json.loads(os.environ.get("AA_TEST_USAGE", "{}"))
+        snapshot = snapshots.get(
+            home,
+            {"rateLimits": {"primary": {"usedPercent": 0}}}
+            if provider == "codex"
+            else {"rate_limits_available": True, "rate_limits": {"five_hour": {"utilization": 0}}},
+        )
+        for line in sys.stdin:
+            request = json.loads(line)
+            if provider == "codex":
+                method = request.get("method")
+                if method == "initialized":
+                    continue
+                if method not in {"initialize", "account/rateLimits/read"}:
+                    sys.exit(99)
+                result = {} if method == "initialize" else snapshot
+                response = {"id": request["id"], "result": result}
+            else:
+                method = request.get("request", {}).get("subtype")
+                if method not in {"initialize", "get_usage"}:
+                    sys.exit(99)
+                result = {} if method == "initialize" else snapshot
+                response = {
+                    "type": "control_response",
+                    "response": {
+                        "subtype": "success",
+                        "request_id": request["request_id"],
+                        "response": result,
+                    },
+                }
+            print(json.dumps(response), flush=True)
+        return
     record = {"provider": provider, "home": home, "arguments": arguments, "pid": os.getpid()}
     if os.environ.get("AA_TEST_READ_STDIN"):
         record["stdin"] = sys.stdin.read()

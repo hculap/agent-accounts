@@ -10,6 +10,10 @@ from pathlib import Path
 
 
 def main():
+    if "app-server" in sys.argv[1:]:
+        # This fixture exercises task lifecycle only. Report unsupported quota
+        # probing immediately, without creating a task or any descendants.
+        sys.exit(2)
     if sys.argv[1:] == ["descendant"]:
         if os.environ.get("AA_R2_IGNORE_TERM") == "1":
             signal.signal(signal.SIGTERM, signal.SIG_IGN)

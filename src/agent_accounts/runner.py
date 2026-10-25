@@ -1,4 +1,4 @@
-"""Stream native output and rotate only on a completed, confirmed quota failure."""
+"""Check quota before launch and stream native output with bounded account rotation."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import sys
 import tempfile
 import time
 
-from . import providers
+from . import providers, quota
 from .store import AccountError, BusyError, Store
 
 
@@ -194,6 +194,7 @@ def run(
     providers.environment(provider, store.profile_home(profile))
     attempted: set[str] = set()
     last_code = 1
+    launched = False
     with contextlib.ExitStack() as stack:
         source = None
         if rotate and not sys.stdin.isatty():
@@ -222,6 +223,41 @@ def run(
                 providers.validate_home_config(provider, home)
                 env = providers.environment(provider, home)
                 argv = providers.command(provider, args)
+                if rotate:
+                    threshold = settings[f"{provider}_rotation_threshold"]
+                    snapshot = quota.read_usage(provider, env)
+                    if snapshot is None:
+                        print(
+                            f"agent-accounts: {provider}/{profile['name']}: usage unavailable; "
+                            "early rotation cannot be checked. Continuing with quota-error rotation.",
+                            file=sys.stderr,
+                        )
+                    elif snapshot.exceeds(threshold):
+                        attempted.add(profile["id"])
+                        if not launched:
+                            last_code = 75
+                        reason = (
+                            "provider reports no ordinary quota available"
+                            if snapshot.blocked
+                            else f"{snapshot.used_percent:g}% used (threshold {threshold}%)"
+                        )
+                        print(
+                            f"agent-accounts: skipping {provider}/{profile['name']}: {reason}.",
+                            file=sys.stderr,
+                        )
+                        # Threshold decisions are based on each invocation's
+                        # native snapshot, not persisted as hard-limit cooldowns.
+                        with store.lock():
+                            choices = _eligible(store.read(), provider, attempted, time.time())
+                        if not choices:
+                            print(
+                                f"agent-accounts: no eligible accounts below the {threshold}% "
+                                "threshold; no additional task launched.",
+                                file=sys.stderr,
+                            )
+                            return last_code
+                        profile = choices[0]
+                        continue
                 with store.lock():
                     state = store.read()
                     current = Store.find(state, provider, profile["name"])
@@ -232,6 +268,7 @@ def run(
                 detector = providers.LimitDetector(provider) if rotate else None
                 if source is not None:
                     source.seek(0)
+                launched = True
                 code = launch(
                     argv,
                     env,
