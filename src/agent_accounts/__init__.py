@@ -1,3 +1,3 @@
 """Portable named accounts for AI coding CLIs."""
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"

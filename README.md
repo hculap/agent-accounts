@@ -91,6 +91,8 @@ Automatic rotation requires these structured batch modes. It recognizes provider
 aa settings set cooldown-seconds 3600
 ```
 
+A busy account explicitly selected with `--account` fails without launching another account. Busy fallback accounts are skipped after a confirmed quota failure.
+
 By default, a task is retried only before assistant or tool work has begun. If a quota error arrives after work has started, the next account is selected, but the task exits without replaying earlier actions. Inspect the existing changes and start a suitable continuation yourself.
 
 For tasks where repeating earlier work is acceptable, explicitly allow replay:

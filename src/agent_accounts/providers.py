@@ -129,8 +129,8 @@ def command(provider: str, args: list[str]) -> list[str]:
     return prefix + args
 
 
-def positionals(provider: str, args: list[str]) -> list[str]:
-    """Locate native command positions without mistaking option values for commands.
+def _parse_args(provider: str, args: list[str]) -> tuple[list[tuple[str, str | None]], list[str]]:
+    """Separate native flags, their values, and command words in one pass.
 
     Unknown flags are left to the native parser; recognized value options must
     be skipped so e.g. --model NAME logout is still rejected as a command.
@@ -158,6 +158,8 @@ def positionals(provider: str, args: list[str]) -> list[str]:
             "--output-last-message",
             "--thread-source",
             "--cyber-access-program",
+            "-p",
+            "--profile",
         }
         if provider == "codex"
         else {
@@ -188,24 +190,63 @@ def positionals(provider: str, args: list[str]) -> list[str]:
             "--session-id",
             "-n",
             "--name",
+            "--effort",
+            "--autocompact",
+            "--debug-file",
+            "--permission-prompt-tool",
         }
     )
-    result = []
-    skip = False
-    for arg in args:
-        if skip:
-            skip = False
-        elif arg == "--":
-            break  # Everything after this is literal prompt data.
-        elif arg in values:
-            skip = True
-        elif not arg.startswith("-"):
-            result.append(arg)
-    return result
+    optional = (
+        {"-d", "--debug", "-r", "--resume", "-w", "--worktree", "--prompt-suggestions"}
+        if provider == "claude"
+        else set()
+    )
+    options: list[tuple[str, str | None]] = []
+    words = []
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        index += 1
+        if arg == "--":
+            # Literal prompt data cannot change command routing or run mode.
+            break
+        if not arg.startswith("-") or arg == "-":
+            words.append(arg)
+            continue
+        if arg.startswith("--"):
+            key, separator, value = arg.partition("=")
+            if separator:
+                options.append((key, value))
+                continue
+            keys = [key]
+        else:
+            keys = ["-" + letter for letter in arg[1:]]
+        for offset, key in enumerate(keys):
+            value = None
+            if key in values or key in optional:
+                attached = arg[offset + 2 :] if not arg.startswith("--") else ""
+                if attached:
+                    # Native parsers accept both -cKEY=VALUE and -c=KEY=VALUE.
+                    # Only this attached separator is syntax; a separate
+                    # value beginning with '=' remains literal data.
+                    value = attached.removeprefix("=")
+                elif index < len(args) and (key in values or not args[index].startswith("-")):
+                    value = args[index]
+                    index += 1
+                options.append((key, value))
+                break
+            options.append((key, None))
+    return options, words
+
+
+def positionals(provider: str, args: list[str]) -> list[str]:
+    return _parse_args(provider, args)[1]
 
 
 def validate_args(provider: str, args: list[str], *, rotate: bool) -> None:
     # A managed profile must not route to another account or a remote daemon.
+    options, words = _parse_args(provider, args)
+    flags = {key for key, _ in options}
     blocked = (
         {"--oss", "--local-provider", "--remote", "--remote-auth-token-env", "-p", "--profile"}
         if provider == "codex"
@@ -218,33 +259,21 @@ def validate_args(provider: str, args: list[str], *, rotate: bool) -> None:
             "--bg",
             "--background",
             "--settings-sources",
+            "--setting-sources",
             "--desktop",
+            "--environment",
         }
     )
-    for arg in args:
-        if arg == "--":
-            break
-        flag = arg.split("=", 1)[0]
-        if flag in blocked or (
-            provider == "codex" and arg.startswith("-p") and not arg.startswith("--")
-        ):
+    for flag in flags:
+        if flag in blocked:
             raise AccountError(f"{flag} conflicts with managed account isolation.")
-    words = positionals(provider, args)
     if provider == "codex":
-        for i, arg in enumerate(args):
-            config = None
-            if arg in ("-c", "--config"):
-                config = args[i + 1] if i + 1 < len(args) else ""
-            elif arg.startswith("--config="):
-                config = arg.partition("=")[2]
-            elif arg.startswith("-c") and arg != "-c":
-                config = arg[2:]
-            if config is not None:
+        for flag, config in options:
+            if flag in ("-c", "--config") and config is not None:
                 key = config.split("=", 1)[0].strip().strip("\"'")
                 if any(
-                    part in key
-                    for part in ("auth", "provider", "base_url", "api_key", "home", "token")
-                ):
+                    part in key for part in ("auth", "provider", "base_url", "api_key", "home")
+                ) or key.split(".")[0] in {"access_token", "refresh_token", "id_token"}:
                     raise AccountError(
                         "Authentication/provider config overrides conflict with managed accounts."
                     )
@@ -262,7 +291,9 @@ def validate_args(provider: str, args: list[str], *, rotate: bool) -> None:
             raise AccountError(
                 "Use the dedicated login command; managed run supports local agent sessions."
             )
-    elif words[:1] and words[0] in {"auth", "setup-token", "gateway", "attach", "respawn"}:
+    elif any(word in {"auth", "setup-token", "gateway", "attach", "respawn"} for word in words):
+        # Extra bare words cannot form a Claude prompt argument. Inspect all
+        # of them so a new native option with a value cannot hide an auth command.
         raise AccountError(
             "Use the dedicated login command; managed run supports local agent sessions."
         )
@@ -273,35 +304,30 @@ def validate_args(provider: str, args: list[str], *, rotate: bool) -> None:
             "Rotation does not accept a nested -- separator; pass the prompt as a normal argument."
         )
     if provider == "codex":
-        if not args or args[0] not in ("exec", "e") or "--json" not in args:
+        if not words or words[0] not in ("exec", "e") or "--json" not in flags:
             raise AccountError(
                 "Auto-rotation requires 'codex -- exec --json ...'; use --no-auto-rotate for interactive sessions."
             )
     else:
-        formats = []
-        for i, arg in enumerate(args):
-            if arg == "--output-format":
-                formats.append(args[i + 1] if i + 1 < len(args) else "")
-            elif arg.startswith("--output-format="):
-                formats.append(arg.partition("=")[2])
-        if (
-            not any(arg in ("-p", "--print") for arg in args)
-            or formats != ["stream-json"]
-            or "--verbose" not in args
-        ):
+        formats = [value for flag, value in options if flag == "--output-format"]
+        if not flags & {"-p", "--print"} or formats != ["stream-json"] or "--verbose" not in flags:
             raise AccountError(
                 "Auto-rotation requires '-p --output-format stream-json --verbose'; "
                 "use --no-auto-rotate for interactive sessions."
             )
-        if any(
-            arg.startswith(("--input-format", "--resume", "--continue", "-r")) or arg == "-c"
-            for arg in args
-        ):
+        if flags & {"--input-format", "--resume", "--continue", "-r", "-c"}:
             raise AccountError(
                 "Rotation supports a fresh text prompt, not streaming input or cross-account resume."
             )
     if provider == "codex" and len(words) > 1 and words[1] in ("resume", "fork"):
         raise AccountError("Rotation cannot resume a session stored in another account's home.")
+
+
+def is_batch(provider: str, args: list[str]) -> bool:
+    options, words = _parse_args(provider, args)
+    if provider == "codex":
+        return words[:1] in (["exec"], ["e"], ["review"])
+    return any(key in ("-p", "--print") for key, _ in options)
 
 
 def validate_home_config(provider: str, home: Path) -> None:
@@ -404,7 +430,11 @@ class LimitDetector:
                 if isinstance(info, dict) and info.get("status") == "rejected":
                     self.quota = True
                     reset = info.get("resetsAt")
-                    if type(reset) in (int, float) and math.isfinite(reset) and reset > 0:
+                    if (
+                        type(reset) in (int, float)
+                        and 0 < reset <= 253402300799
+                        and math.isfinite(reset)
+                    ):
                         self.reset_at = float(reset)
             elif kind == "assistant":
                 if event.get("error") == "rate_limit":
@@ -445,8 +475,7 @@ class LimitDetector:
 
     def limited(self, returncode: int) -> bool:
         return (
-            returncode > 0
-            and returncode not in (130, 143)
+            0 < returncode < 128
             and self.quota
             and self.failed
             and not self.succeeded

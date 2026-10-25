@@ -3,6 +3,7 @@
 import os
 import pathlib
 import tarfile
+import tempfile
 
 import nox
 
@@ -30,7 +31,7 @@ def package(session):
     """Build an sdist and wheel, then smoke-test an isolated wheel installation."""
     session.install("build>=1.2,<2")
     temporary = pathlib.Path(session.create_tmp()).resolve()
-    artifacts = temporary / "dist"
+    artifacts = pathlib.Path(tempfile.mkdtemp(prefix="dist-", dir=temporary))
     session.run("python", "-m", "build", "--outdir", str(artifacts))
     sources = list(artifacts.glob("*.tar.gz"))
     if len(sources) != 1:

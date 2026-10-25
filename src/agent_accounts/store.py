@@ -155,6 +155,13 @@ class Store:
     def profile_lock(self, profile: dict):
         return file_lock(self.profile_home(profile) / ".agent-accounts.lock")
 
+    def registration_lock(self, provider: str, name: str):
+        valid_name(name)
+        if provider not in PROVIDERS:
+            raise AccountError("Unknown provider.")
+        private_dir(self.home)
+        return file_lock(self.home / ".registrations" / provider / f"{name.casefold()}.lock")
+
     def read(self) -> dict:
         path = self.home / "state.json"
         reject_symlinks(path)
@@ -202,7 +209,7 @@ class Store:
                     p["provider"] == provider and p["name"] == name for p in state["profiles"]
                 ):
                     raise ValueError
-        except (KeyError, TypeError, ValueError, AccountError) as exc:
+        except (KeyError, TypeError, ValueError, OverflowError, AccountError) as exc:
             raise AccountError(
                 "Invalid account state; restore a backup before continuing."
             ) from exc

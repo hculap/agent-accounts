@@ -5,7 +5,7 @@ This tool manages local account selection and launches the official provider CLI
 ## Credential handling
 
 - Keep the managed storage directory outside repositories and shared directories.
-- Unix directories created by the tool are private (`0700`); files written by it use `0600`. Provider-created files follow the provider's behavior. Windows directory access depends on filesystem ACLs.
+- Managed store and profile roots are private on Unix (`0700`); files written by the tool use `0600`. Intermediate directories inherit the process umask and remain inside the private store. Provider-created files follow the provider's behavior. Windows directory access depends on filesystem ACLs.
 - Never attach `auth.json`, `.credentials.json`, Keychain exports, complete provider homes, or unredacted login logs to an issue.
 - Imported credentials are copies. Revoking or rotating the original token family can invalidate an imported account. Independent login flows avoid this coupling.
 - Removing an account registration retains its provider directory and does not log it out. Uninstalling the package also retains account data.

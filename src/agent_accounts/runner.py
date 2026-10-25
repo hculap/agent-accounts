@@ -21,12 +21,36 @@ def exit_code(code: int) -> int:
 
 
 def _stop(process: subprocess.Popen, signum: int, *, grouped: bool) -> None:
+    if grouped and os.name != "nt":
+        # The group may outlive its leader. Reaping that leader is not proof
+        # that its tools have stopped, and poll() must not bypass group cleanup.
+        try:
+            os.killpg(process.pid, signum)
+        except ProcessLookupError:
+            process.wait()
+            return
+        try:
+            process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            pass
+        # Once the leader exits, finish terminating descendants that ignored
+        # the requested signal. Never target the wrapper/terminal's own group.
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            # macOS can briefly retain a zombie-only group after the leader
+            # was reaped. Preserve cancellation for this observed race, while
+            # surfacing unexpected permission failures on other platforms.
+            if sys.platform != "darwin" or process.poll() is None:
+                raise
+        process.wait()
+        return
     if process.poll() is not None:
         return
     try:
-        if grouped and os.name != "nt":
-            os.killpg(process.pid, signum)
-        elif os.name == "nt":
+        if os.name == "nt":
             # Native launchers (including console-script .exe wrappers) may
             # own a child process. Killing only the launcher leaves that child
             # running with inherited pipes and potentially active tool calls.
@@ -47,17 +71,18 @@ def _stop(process: subprocess.Popen, signum: int, *, grouped: bool) -> None:
             process.send_signal(signum)
         process.wait(timeout=3)
     except subprocess.TimeoutExpired:
-        if grouped and os.name != "nt":
-            os.killpg(process.pid, signal.SIGKILL)
-        else:
-            process.kill()
+        process.kill()
         process.wait()
     except ProcessLookupError:
         process.wait()
 
 
-def launch(argv: list[str], env: dict[str, str], *, detector=None, stdin=None) -> int:
-    grouped = detector is not None and os.name != "nt"
+class _TerminationRequested(BaseException):
+    """Unwind subprocess.wait before performing blocking child cleanup."""
+
+
+def launch(argv: list[str], env: dict[str, str], *, detector=None, stdin=None, batch=False) -> int:
+    grouped = (batch or detector is not None) and os.name != "nt"
     try:
         process = subprocess.Popen(
             argv,
@@ -73,8 +98,9 @@ def launch(argv: list[str], env: dict[str, str], *, detector=None, stdin=None) -
     previous = signal.getsignal(signal.SIGTERM)
 
     def terminate(_signum, _frame):
-        _stop(process, signal.SIGTERM, grouped=grouped)
-        raise SystemExit(143)
+        # Popen.wait holds a non-reentrant lock. Calling wait again directly
+        # from this handler can deadlock login and non-rotating launches.
+        raise _TerminationRequested
 
     signal.signal(signal.SIGTERM, terminate)
     try:
@@ -103,6 +129,9 @@ def launch(argv: list[str], env: dict[str, str], *, detector=None, stdin=None) -
     except KeyboardInterrupt:
         _stop(process, signal.SIGINT, grouped=grouped)
         return 130
+    except _TerminationRequested:
+        _stop(process, signal.SIGTERM, grouped=grouped)
+        return 143
     except BrokenPipeError:
         _stop(process, signal.SIGTERM, grouped=grouped)
         # Avoid Python's shutdown flush replacing 141 with 120 on a closed pipe.
@@ -177,7 +206,7 @@ def run(
                 try:
                     attempt.enter_context(store.profile_lock(profile))
                 except BusyError:
-                    if not rotate:
+                    if not rotate or (account is not None and not attempted):
                         raise
                     attempted.add(profile["id"])
                     with store.lock():
@@ -203,7 +232,13 @@ def run(
                 detector = providers.LimitDetector(provider) if rotate else None
                 if source is not None:
                     source.seek(0)
-                code = launch(argv, env, detector=detector, stdin=source)
+                code = launch(
+                    argv,
+                    env,
+                    detector=detector,
+                    stdin=source,
+                    batch=providers.is_batch(provider, args),
+                )
                 last_code = code
             if not detector or not detector.limited(code):
                 return code

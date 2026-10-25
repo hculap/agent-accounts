@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import errno
 import json
 import os
 import shutil
@@ -59,9 +61,11 @@ def parser() -> argparse.ArgumentParser:
 def add_account(
     store: Store, provider: str, name: str, source: Path | None, login_args: list[str] | None
 ) -> int:
-    with store.lock():
-        state = store.read()
-        profile = store.create_profile(state, provider, name)
+    # Serialize only registrations for this provider/name while native login
+    # waits for a browser. Other accounts and metadata remain available.
+    with store.registration_lock(provider, name):
+        with store.lock():
+            profile = store.create_profile(store.read(), provider, name)
         home = store.profile_home(profile)
         if login_args is None:
             data = providers.validate_credentials(
@@ -119,14 +123,18 @@ def add_account(
 
                 reject_symlinks(cred)
                 cred.chmod(0o600)
-        state["profiles"].append(profile)
-        state["active"][provider] = name
-        store.write(state)
+        with store.lock():
+            state = store.read()
+            # Merge into the current state; settings and other profiles may
+            # have changed while the user completed authentication.
+            state["profiles"].append(profile)
+            state["active"][provider] = name
+            store.write(state)
     print(f"Saved {provider}/{name} and selected it.")
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
+def _main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     native_args = []
     if "--" in argv:
@@ -172,13 +180,14 @@ def main(argv: list[str] | None = None) -> int:
             with store.lock():
                 state = store.read()
                 profile = Store.find(state, options.provider, options.name)
+                retained_home = store.profile_home(profile)
                 state["profiles"].remove(profile)
                 if state["active"].get(options.provider) == options.name:
                     state["active"].pop(options.provider)
                 store.write(state)
             print(
                 f"Removed {options.provider}/{options.name}. Credentials and session files remain at "
-                f"{store.profile_home(profile)}."
+                f"{retained_home}."
             )
         elif options.command == "run":
             return run(
@@ -244,6 +253,8 @@ def main(argv: list[str] | None = None) -> int:
     except AccountError as exc:
         print(f"agent-accounts: {exc}", file=sys.stderr)
         return 1
+    except BrokenPipeError:
+        raise
     except (OSError, UnicodeError):
         # Native OS exception text can contain paths controlled by credentials/config.
         print(
@@ -253,3 +264,42 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     except KeyboardInterrupt:
         return 130
+
+
+class _PipeSafeOutput:
+    """Normalize Windows pipe errors only where they occur: output writes."""
+
+    def __init__(self, stream):
+        self.stream = stream
+
+    def __getattr__(self, name):
+        return getattr(self.stream, name)
+
+    def _call(self, operation, *args):
+        try:
+            return operation(*args)
+        except OSError as exc:
+            if os.name == "nt" and exc.errno == errno.EINVAL:
+                raise BrokenPipeError from exc
+            raise
+
+    def write(self, value):
+        return self._call(self.stream.write, value)
+
+    def flush(self):
+        return self._call(self.stream.flush)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Flush buffered command/help output before Python's unhandled exit flush."""
+    output = sys.stdout
+    try:
+        with contextlib.redirect_stdout(_PipeSafeOutput(output)):
+            try:
+                return _main(argv)
+            finally:
+                sys.stdout.flush()
+    except BrokenPipeError:
+        with open(os.devnull, "wb") as sink:
+            os.dup2(sink.fileno(), output.fileno())
+        return 141
