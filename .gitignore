@@ -1,0 +1,32 @@
+# Local credentials and managed provider state must never enter the repository.
+.env
+.env.*
+!.env.example
+.codex/
+.claude/
+.agent-accounts/
+auth.json
+.credentials.json
+credentials.json
+*.pem
+*.key
+
+# Python tooling and build products.
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.nox/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+
+# Editor and operating-system files.
+.DS_Store
+.idea/
+.vscode/
+*.swp

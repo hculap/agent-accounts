@@ -1,0 +1,2 @@
+include noxfile.py CONTRIBUTING.md SECURITY.md PLAN.md
+recursive-include tests *.py

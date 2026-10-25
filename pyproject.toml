@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-accounts"
+version = "0.1.0"
+description = "Manage isolated Codex and Claude Code accounts with optional quota rotation."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Szymon Paluch" }]
+keywords = ["codex", "claude-code", "cli", "accounts"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Software Development",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["build>=1.2,<2", "nox>=2024.10.9", "ruff>=0.9,<1", "distlib>=0.3.9; sys_platform == 'win32'"]
+
+[project.scripts]
+agent-accounts = "agent_accounts.cli:main"
+aa = "agent_accounts.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/hculap/agent-accounts"
+Repository = "https://github.com/hculap/agent-accounts"
+Issues = "https://github.com/hculap/agent-accounts/issues"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+include-package-data = false
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["agent_accounts*"]
+namespaces = false
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
